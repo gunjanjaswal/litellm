@@ -21,10 +21,17 @@ vi.mock("@/utils/mcpTokenStore", () => ({
 const oauthHook = vi.hoisted(() => ({
   tokenResponse: null as Record<string, unknown> | null,
   reset: vi.fn(),
-  onTokenReceived: null as ((token: Record<string, unknown> | null) => void) | null,
+  onTokenReceived: null as
+    | ((token: Record<string, unknown> | null, registeredClient?: { clientId?: string; clientSecret?: string }) => void)
+    | null,
 }));
 vi.mock("@/hooks/useMcpOAuthFlow", () => ({
-  useMcpOAuthFlow: (opts: { onTokenReceived: (token: Record<string, unknown> | null) => void }) => {
+  useMcpOAuthFlow: (opts: {
+    onTokenReceived: (
+      token: Record<string, unknown> | null,
+      registeredClient?: { clientId?: string; clientSecret?: string },
+    ) => void;
+  }) => {
     oauthHook.onTokenReceived = opts.onTokenReceived;
     return {
       startOAuthFlow: vi.fn(),
@@ -584,6 +591,54 @@ describe("CreateMCPServer", () => {
       });
       // OBO persists server-side; it must not fall back to the browser-only cache.
       expect(setToken).not.toHaveBeenCalled();
+    });
+
+    it("clears fetched OAuth credentials when the server URL changes", async () => {
+      vi.mocked(networking.createMCPServer).mockResolvedValue({
+        server_id: "new-server-oauth",
+        server_name: "OAuth_Server",
+        alias: "OAuth_Server",
+        url: "https://server-b.example.com/mcp",
+        transport: "http",
+        auth_type: "oauth2",
+        created_at: "2024-01-01T00:00:00Z",
+        created_by: "user-1",
+        updated_at: "2024-01-01T00:00:00Z",
+        updated_by: "user-1",
+      });
+
+      await setupOAuthInteractive();
+
+      const nameInput = document.getElementById("server_name") as HTMLInputElement;
+      await act(async () => {
+        fireEvent.change(nameInput, { target: { value: "OAuth_Server" } });
+      });
+      const urlInput = screen.getByPlaceholderText("https://your-mcp-server.com");
+      await act(async () => {
+        fireEvent.change(urlInput, { target: { value: "https://server-a.example.com/mcp" } });
+      });
+      await act(async () => {
+        oauthHook.onTokenReceived?.(
+          { access_token: "server-a-token", expires_in: 3600 },
+          { clientId: "server-a-client" },
+        );
+      });
+      await act(async () => {
+        fireEvent.change(urlInput, { target: { value: "https://server-b.example.com/mcp" } });
+      });
+
+      const submitButton = screen.getByRole("button", { name: "Add MCP Server" });
+      await act(async () => {
+        fireEvent.click(submitButton);
+      });
+
+      await waitFor(() => {
+        expect(networking.createMCPServer).toHaveBeenCalledTimes(1);
+      });
+      const [, payload] = vi.mocked(networking.createMCPServer).mock.calls[0];
+      expect(payload.url).toBe("https://server-b.example.com/mcp");
+      expect(payload.credentials).toBeUndefined();
+      expect(oauthHook.reset).toHaveBeenCalled();
     });
 
     it("does not submit and shows validation error for invalid JSON in token_validation_json", async () => {

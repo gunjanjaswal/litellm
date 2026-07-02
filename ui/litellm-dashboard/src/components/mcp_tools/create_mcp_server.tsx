@@ -530,6 +530,23 @@ const CreateMCPServer: React.FC<CreateMCPServerProps> = ({
     }
   };
 
+  const handleFormValuesChange = (changedValues: Record<string, unknown>, allValues: Record<string, unknown>) => {
+    const serverUrlChanged = "url" in changedValues || "spec_path" in changedValues;
+    const credentials = allValues.credentials as { access_token?: unknown } | undefined;
+    const hasFetchedOAuthToken = Boolean(oauthAccessToken || credentials?.access_token);
+
+    if (serverUrlChanged && hasFetchedOAuthToken) {
+      form.setFieldsValue({ credentials: undefined });
+      setOauthAccessToken(null);
+      clearTools();
+      resetOAuthFlow();
+      setFormValues({ ...allValues, credentials: undefined });
+      return;
+    }
+
+    setFormValues(allValues);
+  };
+
   // Generate options with existing groups and potential new group
   const getAccessGroupOptions = () => {
     const existingOptions = availableAccessGroups.map((group: string) => ({
@@ -631,7 +648,7 @@ const CreateMCPServer: React.FC<CreateMCPServerProps> = ({
         <Form
           form={form}
           onFinish={handleCreate}
-          onValuesChange={(_, allValues) => setFormValues(allValues)}
+          onValuesChange={handleFormValuesChange}
           layout="vertical"
           className="space-y-6"
         >
