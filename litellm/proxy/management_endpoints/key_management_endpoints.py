@@ -530,26 +530,31 @@ def _check_allowed_routes_caller_permission(
     allowed_routes: Optional[list],
     user_api_key_dict: UserAPIKeyAuth,
     *,
+    is_explicit: bool = False,
     allow_safe_presets: bool = False,
 ) -> None:
     """
-    Only proxy admins may set `allowed_routes` on a key.
+    Require PROXY_ADMIN when `allowed_routes` is present in the request body,
+    unless the caller went through the `key_type` preset flow.
 
-    `allowed_routes` overrides the standard role-based route gate in
-    RouteChecks.non_proxy_admin_allowed_routes_check, so the field is
-    restricted to admins. Non-admins must instead use `key_type` to pick a
-    preset bucket — that path goes through `handle_key_type` and re-enters
-    this function with `allow_safe_presets=True`, which lets the derived
-    `llm_api_routes` / `info_routes` values through. Raw-body call sites
-    leave `allow_safe_presets=False` so non-admins can't write those values
-    directly.
+    Raw-body call sites pass `is_explicit="allowed_routes" in data.model_fields_set`
+    so a caller that omits the field (model default flows through) is distinct
+    from one that sends any explicit value.
+
+    Post-`handle_key_type` call sites pass `allow_safe_presets=True` with the
+    values derived by `handle_key_type`; those values are not from the request
+    body, so `is_explicit` stays False and the safe-preset carve-out below
+    accepts any list of tokens in `_NON_ADMIN_SAFE_ALLOWED_ROUTES_PRESETS`.
     """
-    # Empty list is the default on GenerateKeyRequest — treat as "not set".
-    if not allowed_routes:
+    if not is_explicit and not allowed_routes:
         return
     if user_api_key_dict.user_role == LitellmUserRoles.PROXY_ADMIN.value:
         return
-    if allow_safe_presets and all(r in _NON_ADMIN_SAFE_ALLOWED_ROUTES_PRESETS for r in allowed_routes):
+    if (
+        allow_safe_presets
+        and allowed_routes
+        and all(r in _NON_ADMIN_SAFE_ALLOWED_ROUTES_PRESETS for r in allowed_routes)
+    ):
         return
     raise HTTPException(
         status_code=403,
@@ -1566,6 +1571,7 @@ async def generate_key_fn(
         _check_allowed_routes_caller_permission(
             allowed_routes=data.allowed_routes,
             user_api_key_dict=user_api_key_dict,
+            is_explicit="allowed_routes" in data.model_fields_set,
         )
         _check_passthrough_routes_caller_permission(
             data=data,
@@ -1736,6 +1742,7 @@ async def generate_service_account_key_fn(
     _check_allowed_routes_caller_permission(
         allowed_routes=data.allowed_routes,
         user_api_key_dict=user_api_key_dict,
+        is_explicit="allowed_routes" in data.model_fields_set,
     )
     _check_passthrough_routes_caller_permission(
         data=data,
@@ -2231,6 +2238,7 @@ async def _validate_update_key_data(
     _check_allowed_routes_caller_permission(
         allowed_routes=data.allowed_routes,
         user_api_key_dict=user_api_key_dict,
+        is_explicit="allowed_routes" in data.model_fields_set,
     )
     _check_passthrough_routes_caller_permission(
         data=data,
@@ -4551,6 +4559,7 @@ async def regenerate_key_fn(
             _check_allowed_routes_caller_permission(
                 allowed_routes=data.allowed_routes,
                 user_api_key_dict=user_api_key_dict,
+                is_explicit="allowed_routes" in data.model_fields_set,
             )
             _check_passthrough_routes_caller_permission(
                 data=data,
